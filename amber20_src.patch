@@ -1,0 +1,98 @@
+diff -u -r -bB amber_a40/amber20_src/src/pmemd/src/runmd.F90 amber_a40_mod/amber20_src/src/pmemd/src/runmd.F90
+--- src/pmemd/src/runmd.F90	2021-10-04 19:59:24.000000000 -0700
++++ src/pmemd/src/runmd.F90	2021-10-06 16:05:58.000000000 -0700
+@@ -289,6 +289,8 @@
+   double precision      :: plumed_chargeUnits
+   integer               :: plumed_need_pot_enes
+   double precision      :: plumed_frc(3,atm_cnt)
++  integer               :: plumed_shuttle_atom_count
++  integer, allocatable  :: plumed_shuttle_atoms(:)
+ ! X-ray
+ #if defined(CUDA) && !defined(MPI)
+   integer               :: alloc_status
+@@ -554,6 +556,14 @@
+ ! PLUMED
+   if (plumed == 1) then
+ #   include "Plumed_init.inc"
++#ifdef CUDA
++    call plumed_f_gcmd("getShuttleAtomCount"//char(0), plumed_shuttle_atom_count)
++    print *, "Shuttling ", plumed_shuttle_atom_count, " atoms:"
++    allocate(plumed_shuttle_atoms(plumed_shuttle_atom_count))
++    call plumed_f_gcmd("getShuttleAtoms"//char(0), plumed_shuttle_atoms)
++    print *, plumed_shuttle_atoms
++    call gpu_setup_shuttle_info(plumed_shuttle_atom_count, 0, plumed_shuttle_atoms)
++#endif
+   endif
+ 
+ ! Make a first dynamics step:
+@@ -740,10 +750,12 @@
+ ! PLUMED
+     if (plumed == 1) then
+ #ifdef CUDA
+-      call gpu_download_crd(crd)
++      !call gpu_download_crd(crd)
++      call gpu_shuttle_retrieve_data(crd, 0)
+ 
+       if (plumed_need_pot_enes > 0) then
+-        call gpu_download_frc(frc)
++        !call gpu_download_frc(frc)
++        call gpu_shuttle_retrieve_data(frc, 1)
+       end if
+ #endif
+ 
+@@ -751,9 +763,11 @@
+ 
+ #ifdef CUDA
+       if (plumed_need_pot_enes > 0) then
+-        call gpu_upload_frc(frc)
++        !call gpu_upload_frc(frc)
++        call gpu_shuttle_post_data(frc, 1)
+       else
+-        call gpu_upload_frc_add(plumed_frc)
++        !call gpu_upload_frc_add(plumed_frc)
++        call gpu_shuttle_post_data(plumed_frc, 4)
+       end if
+ #endif
+     end if
+@@ -1754,10 +1768,12 @@
+ ! PLUMED
+       if (plumed == 1) then
+ #ifdef CUDA
+-        call gpu_download_crd(crd)
++        call gpu_shuttle_retrieve_data(crd, 0)
++        !call gpu_download_crd(crd)
+ 
+         if (plumed_need_pot_enes > 0) then
+-          call gpu_download_frc(frc)
++          !call gpu_download_frc(frc)
++          call gpu_shuttle_retrieve_data(frc, 1)
+         end if
+ #endif
+ 
+@@ -1765,9 +1781,11 @@
+ 
+ #ifdef CUDA
+         if (plumed_need_pot_enes > 0) then
+-          call gpu_upload_frc(frc)
++          !call gpu_upload_frc(frc)
++          call gpu_shuttle_post_data(frc, 1)
+         else
+-          call gpu_upload_frc_add(plumed_frc)
++          !call gpu_upload_frc_add(plumed_frc)
++          call gpu_shuttle_post_data(plumed_frc, 4)
+         end if
+ #endif
+       end if
+@@ -5097,8 +5115,10 @@
+   call update_time(runmd_time)
+ 
+ ! PLUMED
+-  if (plumed .ne. 0) call plumed_f_gfinalize()
+-
++  if (plumed .ne. 0) then
++    call plumed_f_gfinalize()
++    deallocate(plumed_shuttle_atoms)
++  end if
+   return
+ 
+   540 format(/5x, ' A V E R A G E S   O V E R ', i7, ' S T E P S', /)
